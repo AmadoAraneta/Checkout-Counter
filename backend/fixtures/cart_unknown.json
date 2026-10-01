@@ -1,0 +1,9 @@
+﻿{
+  "cart_id": null,
+  "session_id": "SHOP-UNKNOWN-9999",
+  "status": "NOT_FOUND",
+  "items": [],
+  "subtotal": 0.0,
+  "total": 0.0,
+  "currency": "DEMO"
+}

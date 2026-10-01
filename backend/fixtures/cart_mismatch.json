@@ -1,0 +1,25 @@
+﻿{
+  "cart_id": "CART-08",
+  "session_id": "SHOP-20260928-0008",
+  "status": "READY_FOR_CHECKOUT",
+  "items": [
+    {
+      "product_id": "P1001",
+      "name": "Milk",
+      "quantity": 2,
+      "unit_price": 2.50,
+      "line_total": 5.00
+    },
+    {
+      "product_id": "P1030",
+      "name": "Bread",
+      "quantity": 1,
+      "unit_price": 1.80,
+      "line_total": 1.80
+    }
+  ],
+  "subtotal": 7.80,
+  "total": 7.80,
+  "currency": "DEMO",
+  "cart_timestamp": "2026-09-29T23:01:00+08:00"
+}
