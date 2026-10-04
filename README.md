@@ -63,3 +63,24 @@ VITE_API_URL=http://localhost:5000/api
 - `frontend/src/main.tsx`: typed React views for scan, cart summary, payment selection, QR/NFC payment, receipt, and transaction history.
 - The frontend uses one centralized JSON API helper and validates totals before enabling payment.
 - In-memory data resets when the backend restarts. This is intentional for a deterministic demo.
+
+## Integrated QR payment flow
+
+The QR option uses the QR payment workflow from `qrpayment` while keeping the Checkout-Counter UI:
+
+1. Load and validate a cart.
+2. Select **QR Payment**.
+3. The backend creates a pending demo payment and generates a PNG QR code.
+4. Scan the QR code from a phone on the same network, or approve from the checkout screen.
+5. The phone page supports **Pay Demo** and **Decline Demo**, using `DEMO-APPROVE` / `DEMO-DECLINE` confirmation values.
+6. Successful payments appear in the existing transaction history and produce a Payment Sent receipt.
+
+The generated phone URL uses the request host. To test from another device, open the frontend using the checkout computer’s LAN IP and make sure port 5000 is reachable. The application remains simulation-only and does not process real payments.
+
+### QR API additions
+
+- `GET /api/payments/{payment_token}/qr` returns the generated QR PNG.
+- `POST /api/payments/{payment_token}/confirm` accepts `DEMO-APPROVE` or `DEMO-DECLINE`.
+- `GET /phone/{payment_token}` serves the phone confirmation page.
+- `GET /receipt/{payment_token}` serves the Payment Sent receipt.
+- `POST /api/reset` clears demo state between runs.
