@@ -3,4 +3,3 @@ uvicorn[standard]==0.34.0
 pydantic==2.10.5
 qrcode==8.0
 Pillow==11.1.0
-httpx==0.28.1
