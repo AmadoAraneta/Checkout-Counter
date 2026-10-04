@@ -7,7 +7,7 @@ import './styles.css'
 
 type Item = { product_id: string; product_name: string; quantity: number; unit_price: number; line_total: number }
 type Cart = { cart_id: string; session_id: string; items: Item[]; subtotal?: number; total: number; currency?: string }
-type Payment = { payment_token: string; payment_id?: string; transaction_id?: string; session_id: string; amount: number; method: string; status: string; mock_url?: string; phone_url?: string; qr_image_url?: string }
+type Payment = { payment_token: string; payment_id?: string; transaction_id?: string; session_id: string; amount: number; method: string; status: string; currency?: string; simulation_reference?: string; transaction_status?: string; mock_url?: string; phone_url?: string; qr_image_url?: string; reused?: boolean }
 type Tx = { transaction_id: string; cart_id: string; session_id: string; amount: number; payment_method: string; timestamp: string; payment_status: string; items: Item[] }
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'

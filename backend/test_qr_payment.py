@@ -51,6 +51,23 @@ def test_qr_confirmation_rejects_duplicate_confirmation():
     assert duplicate.json()['detail']['status'] == 'DUPLICATE'
 
 
+def test_qr_payment_creation_is_idempotent_for_same_token():
+    payload = {'session_id': 'DEMO-1001', 'payment_method': 'QR', 'amount': 34.0, 'payment_token': 'PAY-SIM-000123'}
+    first = client.post('/api/payments', json=payload)
+    second = client.post('/api/payments', json=payload)
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json()['payment_id'] == first.json()['payment_id']
+    assert second.json()['reused'] is True
+
+
+def test_qr_payment_token_cannot_be_reused_for_another_checkout():
+    payload = {'session_id': 'DEMO-1001', 'payment_method': 'QR', 'amount': 34.0, 'payment_token': 'PAY-SIM-000123'}
+    client.post('/api/payments', json=payload)
+    collision = client.post('/api/payments', json={**payload, 'session_id': 'DEMO-1002', 'amount': 45.0})
+    assert collision.status_code == 409
+
+
 def test_payment_method_and_non_finite_amount_are_rejected():
     invalid_method = client.post('/api/payments', json={'session_id': 'DEMO-1001', 'payment_method': 'CARD', 'amount': 34})
     assert invalid_method.status_code == 422

@@ -54,6 +54,7 @@ class PaymentRequest(BaseModel):
     session_id: str = Field(min_length=1)
     payment_method: Literal['QR', 'NFC']
     amount: float = Field(gt=0)
+    payment_token: str | None = None
 
 
 class ConfirmationRequest(BaseModel):
@@ -114,7 +115,13 @@ def create_payment(request: PaymentRequest, http_request: Request):
     if abs(cart['total'] - request.amount) > .01:
         raise HTTPException(422, 'Payment amount does not match cart total.')
 
-    token = uid('PAY')
+    token = request.payment_token or uid('PAY')
+    existing = PAYMENTS.get(token)
+    if existing:
+        if existing['session_id'] != cart['session_id'] or abs(existing['amount'] - request.amount) > .01:
+            raise HTTPException(409, 'Payment token already belongs to another checkout.')
+        return {**payment_result(existing), 'phone_url': existing.get('phone_url'), 'qr_image_url': existing.get('qr_image_url'), 'mock_url': existing.get('mock_url'), 'simulation_only': True, 'reused': True}
+
     payment = {
         'payment_token': token,
         'payment_id': uid('PAYMENT-SIM'),
@@ -126,7 +133,7 @@ def create_payment(request: PaymentRequest, http_request: Request):
         'transaction_status': 'PENDING_PAYMENT',
         'created_at': now(),
         'expires_at': now() + timedelta(minutes=5),
-        'simulation_reference': f'SIM-QR-{token.removeprefix("PAY-")}',
+        'simulation_reference': f'SIM-QR-{token.removeprefix("PAY-").removeprefix("SIM-")}',
     }
     if request.payment_method == 'QR':
         phone_url = str(http_request.base_url).rstrip('/') + f'/phone/{token}'
@@ -174,6 +181,7 @@ def finish(token: str, state: str):
     payment['status'] = state
     payment['transaction_status'] = 'PAYMENT_SUCCESS' if state == 'successful' else 'PAYMENT_FAILED'
     if state == 'successful':
+        payment['confirmed_at'] = now()
         cart = cart_or_404(payment['session_id'])
         transaction = {
             'transaction_id': payment['transaction_id'], 'cart_id': cart['cart_id'],
@@ -230,7 +238,7 @@ def phone_page(token: str):
     return HTMLResponse(f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Demo QR Payment</title>
 <style>body{{font-family:Arial,sans-serif;max-width:460px;margin:30px auto;padding:20px;background:#f5f7fa;color:#153b5b}}.card{{background:#fff;padding:26px;border-radius:18px;box-shadow:0 8px 24px #193b5b1a}}button{{width:100%;padding:15px;margin-top:12px;border:0;border-radius:10px;font-size:16px;font-weight:bold;cursor:pointer}}.ok{{background:#153b5b;color:#fff}}.bad{{background:#fff0ee;color:#ae3028}}.demo{{background:#fff3dd;border:1px solid #f3d394;border-radius:10px;padding:12px;font-size:13px}}#out{{white-space:pre-wrap;text-align:center;font-weight:bold}}</style>
 <div class="card"><h1>Demo QR Payment</h1><div class="demo"><b>SIMULATION ONLY</b><br>No real money is processed.</div><p>Transaction: <b>{payment['transaction_id']}</b></p><p>Amount: <b>€{payment['amount']:.2f} DEMO</b></p><button class="ok" onclick="confirmPayment('DEMO-APPROVE')">Approve simulated payment</button><button class="bad" onclick="confirmPayment('DEMO-DECLINE')">Decline simulated payment</button><p id="out"></p></div>
-<script>async function confirmPayment(value){{document.querySelectorAll('button').forEach(b=>b.disabled=true);const r=await fetch('/api/payments/{token}/confirm',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{confirmation:value}})}});const d=await r.json();document.getElementById('out').textContent=r.ok?'PAYMENT '+(d.status==='successful'?'APPROVED':'DECLINED'):((d.detail&&d.detail.detail)||'Payment already confirmed');}}</script>''')
+<script>async function confirmPayment(value){{document.querySelectorAll('button').forEach(b=>b.disabled=true);const r=await fetch('/api/payments/{token}/confirm',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{confirmation:value}})}});const d=await r.json();if(r.ok&&d.status==='successful'){{document.getElementById('out').textContent='PAYMENT APPROVED — opening receipt…';setTimeout(()=>window.location.href='/receipt/{token}',650);}}else{{document.getElementById('out').textContent=r.status===409?'DUPLICATE: this payment was already confirmed':(r.ok?'PAYMENT DECLINED':((d.detail&&d.detail.detail)||'Payment already confirmed'));}}}}</script>''')
 
 
 @app.get('/receipt/{token}', response_class=HTMLResponse)
