@@ -75,3 +75,37 @@ The QR option follows the Lab 4 simulated-payment workflow while using the Check
 5. Repeated confirmations return HTTP `409`, and reusing the same payment token is idempotent.
 
 The backend accepts the QR provider aliases `method` and `transaction_id` alongside the Checkout-Counter fields. Cart/session validation remains authoritative, so the payment amount must match the loaded cart total.
+
+## Hardware NFC payment integration
+
+The NFC option now uses the payment state machine and serial protocol from the companion `nfc_payment_service_vscode` project. The combined project includes the ESP32 firmware in `firmware/esp32_rc522_keypad.ino` and must be flashed to an ESP32 connected to an RC522 reader and matrix keypad.
+
+Configure the backend before starting it:
+
+```env
+NFC_SERIAL_PORT=/dev/ttyUSB0
+NFC_APPROVED_UIDS=04A1B2C3D4,DEADBEEF
+NFC_BAUDRATE=115200
+NFC_SERIAL_TIMEOUT=1
+```
+
+The backend starts one serial reader for the active Checkout-Counter payment. The cart total is sent as the requested NFC amount; the keypad must submit that exact amount followed by `#`, then an approved NFC UID must be read. The NFC service's original optional parking-fee calculation is configured to `0.00` by default in the checkout integration so it cannot silently change the cart/order total; override `NFC_PARKING_FEE` only when that fee is an intentional part of the order.
+
+The integrated NFC endpoints are:
+
+```text
+POST /api/payments/{token}/nfc/start
+GET  /api/payments/{token}/nfc/status
+POST /api/payments/{token}/nfc/cancel
+```
+
+The browser polls the status endpoint. Success is converted into the existing Checkout-Counter transaction, receipt, and audit flow; failure, cancellation, serial/device errors, and the five-minute payment timeout remain visible as payment states and do not create a completed order.
+
+The ESP32-to-backend serial protocol is unchanged:
+
+```text
+KEYPAD:6
+KEYPAD:.
+KEYPAD:#
+NFC_TAG:04A1B2C3D4
+```

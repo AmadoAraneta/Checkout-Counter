@@ -1,0 +1,25 @@
+{
+  "simulation_boundary": "RC522 UIDs are demo identifiers only; never accept real financial NFC cards.",
+  "rc522": {
+    "voltage": "3.3V ONLY",
+    "3.3V": "ESP32 3V3",
+    "GND": "ESP32 GND",
+    "SDA_SS": "ESP32 GPIO 5",
+    "SCK": "ESP32 GPIO 18",
+    "MOSI": "ESP32 GPIO 23",
+    "MISO": "ESP32 GPIO 19",
+    "RST": "ESP32 GPIO 22",
+    "IRQ": "Not connected"
+  },
+  "keypad": {
+    "R1": "ESP32 GPIO 13",
+    "R2": "ESP32 GPIO 14",
+    "R3": "ESP32 GPIO 25",
+    "R4": "ESP32 GPIO 26",
+    "C1": "ESP32 GPIO 27",
+    "C2": "ESP32 GPIO 32",
+    "C3": "ESP32 GPIO 33"
+  },
+  "approved_demo_uids": ["04A1B2C3D4"],
+  "parking_fee": {"label": "Parking Fee", "currency": "PHP", "amount": "50.00", "automatic": true}
+}

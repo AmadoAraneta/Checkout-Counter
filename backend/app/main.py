@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
+from .nfc_manager import NFCManager
 from .service import get_fixture_cart
 
 app = FastAPI(title='Checkout Counter Demo API')
@@ -30,6 +31,7 @@ CARTS = {
     },
 }
 PAYMENTS, TRANSACTIONS, AUDITS = {}, [], []
+NFC = NFCManager()
 
 
 def now() -> datetime:
@@ -79,7 +81,8 @@ def payment_result(payment: dict) -> dict:
             'waiting': 'PENDING',
             'successful': 'SUCCESS',
             'failed': 'FAILED',
-            'expired': 'EXPIRED',
+        'expired': 'EXPIRED',
+        'cancelled': 'CANCELLED',
         }.get(status, status.upper()),
         'transaction_status': payment.get('transaction_status', 'PENDING_PAYMENT'),
         'simulation_reference': payment.get('simulation_reference'),
@@ -87,7 +90,8 @@ def payment_result(payment: dict) -> dict:
             'waiting': 'Waiting for simulated payment',
             'successful': 'Payment successful',
             'failed': 'Payment failed',
-            'expired': 'Payment expired',
+        'expired': 'Payment expired',
+        'cancelled': 'Payment cancelled',
         }.get(status, status),
     }
     return result
@@ -168,6 +172,56 @@ def create_payment(request: PaymentRequest, http_request: Request):
     }
 
 
+@app.post('/api/payments/{token}/nfc/start')
+def start_nfc_payment(token: str):
+    payment = PAYMENTS.get(token)
+    if not payment:
+        raise HTTPException(404, 'Payment token not found.')
+    if payment['method'] != 'NFC':
+        raise HTTPException(400, 'NFC start is only available for NFC payments.')
+    if payment['status'] != 'waiting':
+        return {**payment_result(payment), 'nfc': NFC.status(token)}
+    try:
+        nfc = NFC.start(token, payment['transaction_id'], payment['amount'])
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {**payment_result(payment), 'nfc': nfc, 'hardware_required': True}
+
+
+@app.get('/api/payments/{token}/nfc/status')
+def nfc_payment_status(token: str):
+    payment = PAYMENTS.get(token)
+    if not payment:
+        raise HTTPException(404, 'Payment token not found.')
+    if payment['status'] == 'waiting' and now() > payment['expires_at']:
+        NFC.cancel(token)
+        payment['status'] = 'expired'
+        payment['transaction_status'] = 'PAYMENT_EXPIRED'
+    nfc = NFC.status(token)
+    if nfc['status'] == 'successful' and payment['status'] == 'waiting':
+        finish(token, 'successful')
+    elif nfc['status'] == 'failed' and payment['status'] == 'waiting':
+        finish(token, 'failed')
+    elif nfc['status'] == 'cancelled' and payment['status'] == 'waiting':
+        payment['status'] = 'cancelled'
+        payment['transaction_status'] = 'PAYMENT_CANCELLED'
+    return {**payment_result(payment), 'nfc': nfc, 'hardware_required': True}
+
+
+@app.post('/api/payments/{token}/nfc/cancel')
+def cancel_nfc_payment(token: str):
+    payment = PAYMENTS.get(token)
+    if not payment:
+        raise HTTPException(404, 'Payment token not found.')
+    if payment['method'] != 'NFC':
+        raise HTTPException(400, 'NFC cancellation is only available for NFC payments.')
+    nfc = NFC.cancel(token)
+    if payment['status'] == 'waiting':
+        payment['status'] = 'cancelled'
+        payment['transaction_status'] = 'PAYMENT_CANCELLED'
+    return {**payment_result(payment), 'nfc': nfc, 'hardware_required': True}
+
+
 @app.get('/api/payments/{token}/qr')
 def payment_qr(token: str):
     payment = PAYMENTS.get(token)
@@ -208,7 +262,7 @@ def finish(token: str, state: str):
         }
         TRANSACTIONS.append(transaction)
         AUDITS.extend([
-            {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'PAYMENT_SUCCESS', 'message': f"Simulated {payment['method']} payment completed", 'timestamp': now()},
+            {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'PAYMENT_SUCCESS', 'message': f"{payment['method']} payment completed", 'timestamp': now()},
             {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'RECEIPT_CREATED', 'message': 'Receipt generated for checkout', 'timestamp': now()},
         ])
     return payment_result(payment)
@@ -228,6 +282,9 @@ def confirm_payment(token: str, payload: ConfirmationRequest):
 
 @app.post('/api/payments/{token}/complete')
 def complete(token: str):
+    payment = PAYMENTS.get(token)
+    if payment and payment['method'] == 'NFC':
+        raise HTTPException(409, 'Hardware NFC payments must complete through the NFC reader service.')
     return finish(token, 'successful')
 
 
@@ -273,6 +330,8 @@ def receipt_page(token: str):
 
 @app.post('/api/reset')
 def reset_demo():
+    if NFC.payment_token:
+        NFC.cancel(NFC.payment_token)
     PAYMENTS.clear()
     TRANSACTIONS.clear()
     AUDITS.clear()
