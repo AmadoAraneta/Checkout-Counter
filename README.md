@@ -45,7 +45,7 @@ Open http://localhost:5173.
 
 The backend is already bound to `0.0.0.0`. Find the laptop IP with `ipconfig` (Windows) or `ip addr`/`ifconfig` (macOS/Linux). Replace `localhost` in the generated URL with the laptop IP, for example:
 
-`http://192.168.1.25:5000/mock-payment/PAY-ABC123`
+`http://192.168.1.25:5000/phone/PAY-ABC123`
 
 Connect the phone and laptop to the same Wi-Fi/hotspot and allow Python through the firewall if prompted. The frontend polls the backend, so approving from the phone updates the checkout screen.
 
@@ -63,3 +63,15 @@ VITE_API_URL=http://localhost:5000/api
 - `frontend/src/main.tsx`: typed React views for scan, cart summary, payment selection, QR/NFC payment, receipt, and transaction history.
 - The frontend uses one centralized JSON API helper and validates totals before enabling payment.
 - In-memory data resets when the backend restarts. This is intentional for a deterministic demo.
+
+## Integrated QR payment flow
+
+The QR option follows the Lab 4 simulated-payment workflow while using the Checkout-Counter React screens:
+
+1. A validated cart total creates a QR payment through `POST /api/payments`.
+2. The backend returns a phone URL and PNG QR image at `/api/payments/{token}/qr`.
+3. A phone on the same network can approve or decline with `DEMO-APPROVE` or `DEMO-DECLINE`.
+4. The React payment screen polls `/api/payments/{token}` and advances to the existing receipt/history flow after success.
+5. Repeated confirmations return HTTP `409`, and reusing the same payment token is idempotent.
+
+The backend accepts the QR provider aliases `method` and `transaction_id` alongside the Checkout-Counter fields. Cart/session validation remains authoritative, so the payment amount must match the loaded cart total.

@@ -51,9 +51,12 @@ def cart_or_404(session_id: str):
 
 
 class PaymentRequest(BaseModel):
-    session_id: str = Field(min_length=1)
-    payment_method: Literal['QR', 'NFC']
+    session_id: str | None = Field(default=None, min_length=1)
+    transaction_id: str | None = Field(default=None, min_length=1)
+    payment_method: Literal['QR', 'NFC'] | None = None
+    method: Literal['QR', 'NFC'] | None = None
     amount: float = Field(gt=0)
+    currency: Literal['DEMO'] = 'DEMO'
     payment_token: str | None = None
 
 
@@ -72,6 +75,12 @@ def payment_result(payment: dict) -> dict:
         'amount': payment['amount'],
         'method': payment['method'],
         'currency': 'DEMO',
+        'provider_status': {
+            'waiting': 'PENDING',
+            'successful': 'SUCCESS',
+            'failed': 'FAILED',
+            'expired': 'EXPIRED',
+        }.get(status, status.upper()),
         'transaction_status': payment.get('transaction_status', 'PENDING_PAYMENT'),
         'simulation_reference': payment.get('simulation_reference'),
         'message': {
@@ -111,7 +120,14 @@ def get_cart(session_id: str):
 
 @app.post('/api/payments')
 def create_payment(request: PaymentRequest, http_request: Request):
-    cart = cart_or_404(request.session_id)
+    session_id = request.session_id or request.transaction_id
+    payment_method = request.payment_method or request.method
+    if not session_id:
+        raise HTTPException(422, 'session_id or transaction_id is required.')
+    if not payment_method:
+        raise HTTPException(422, 'payment_method or method is required.')
+
+    cart = cart_or_404(session_id)
     if abs(cart['total'] - request.amount) > .01:
         raise HTTPException(422, 'Payment amount does not match cart total.')
 
@@ -125,17 +141,17 @@ def create_payment(request: PaymentRequest, http_request: Request):
     payment = {
         'payment_token': token,
         'payment_id': uid('PAYMENT-SIM'),
-        'transaction_id': uid('TXN'),
+        'transaction_id': request.transaction_id or uid('TXN'),
         'session_id': cart['session_id'],
         'amount': request.amount,
-        'method': request.payment_method,
+        'method': payment_method,
         'status': 'waiting',
         'transaction_status': 'PENDING_PAYMENT',
         'created_at': now(),
         'expires_at': now() + timedelta(minutes=5),
-        'simulation_reference': f'SIM-QR-{token.removeprefix("PAY-").removeprefix("SIM-")}',
+        'simulation_reference': f'SIM-{payment_method}-{token.removeprefix("PAY-").removeprefix("SIM-")}',
     }
-    if request.payment_method == 'QR':
+    if payment_method == 'QR':
         phone_url = str(http_request.base_url).rstrip('/') + f'/phone/{token}'
         payment['phone_url'] = phone_url
         payment['qr_image_url'] = str(http_request.base_url).rstrip('/') + f'/api/payments/{token}/qr'
@@ -244,6 +260,8 @@ def phone_page(token: str):
 @app.get('/receipt/{token}', response_class=HTMLResponse)
 def receipt_page(token: str):
     payment = PAYMENTS.get(token)
+    if payment is None:
+        payment = next((candidate for candidate in PAYMENTS.values() if candidate['transaction_id'] == token), None)
     if not payment or payment['status'] != 'successful':
         raise HTTPException(409, 'Receipt is available only after a successful demo payment')
     confirmed = next((tx for tx in TRANSACTIONS if tx['transaction_id'] == payment['transaction_id']), None)

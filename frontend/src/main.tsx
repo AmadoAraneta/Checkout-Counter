@@ -11,7 +11,8 @@ type Payment = { payment_token: string; payment_id?: string; transaction_id?: st
 type Tx = { transaction_id: string; cart_id: string; session_id: string; amount: number; payment_method: string; timestamp: string; payment_status: string; items: Item[] }
 
 const API = import.meta.env.VITE_API_URL || 'http://localhost:5000/api'
-async function api<T>(path: string, opt?: RequestInit): Promise<T> { const response = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opt }); const body = await response.json().catch(() => ({})); if (!response.ok) throw Error(body.detail || 'Request failed'); return body }
+async function api<T>(path: string, opt?: RequestInit): Promise<T> { const response = await fetch(API + path, { headers: { 'Content-Type': 'application/json' }, ...opt }); const body = await response.json().catch(() => ({})); if (!response.ok) { const detail = typeof body.detail === 'string' ? body.detail : body.detail?.detail || body.message; throw Error(detail || 'Request failed') } return body }
+function normalizedStatus(status: string) { return ({ PENDING: 'waiting', PENDING_PAYMENT: 'waiting', SUCCESS: 'successful', PAYMENT_SUCCESS: 'successful', FAILED: 'failed', PAYMENT_FAILED: 'failed', EXPIRED: 'expired' } as Record<string, string>)[status] || status }
 const Btn = ({ children, onClick, kind = 'primary', disabled = false, type = 'button' }: { children: any; onClick?: () => void; kind?: string; disabled?: boolean; type?: 'button' | 'submit' }) => <button type={type} className={'btn ' + kind} disabled={disabled} onClick={onClick}>{children}</button>
 const Card = ({ children }: { children: any }) => <section className="card">{children}</section>
 const ErrorBox = ({ m }: { m: string }) => <div className="error">{m}</div>
@@ -81,8 +82,9 @@ function Pay({ p, success, back }: { p: Payment; success: () => void; back: () =
     const timer = window.setInterval(async () => {
       try {
         const result = await api<any>('/payments/' + p.payment_token)
-        setStatus(result.status)
-        if (result.status === 'successful') success()
+        const nextStatus = normalizedStatus(result.status)
+        setStatus(nextStatus)
+        if (nextStatus === 'successful') success()
       } catch { /* payment may have expired */ }
     }, 2000)
     return () => window.clearInterval(timer)
@@ -90,9 +92,16 @@ function Pay({ p, success, back }: { p: Payment; success: () => void; back: () =
   async function finish(path = 'complete') {
     setBusy(true)
     try {
-      const result = await api<any>('/payments/' + p.payment_token + '/' + path, { method: 'POST', body: '{}' })
-      setStatus(result.status)
-      if (result.status === 'successful') success()
+      const isQrApproval = p.method === 'QR' && path === 'complete'
+      const endpoint = isQrApproval ? '/payments/' + p.payment_token + '/confirm' : '/payments/' + p.payment_token + '/' + path
+      const body = isQrApproval ? JSON.stringify({ confirmation: 'DEMO-APPROVE' }) : '{}'
+      const result = await api<any>(endpoint, { method: 'POST', body })
+      const nextStatus = normalizedStatus(result.status)
+      setStatus(nextStatus)
+      if (nextStatus === 'successful') success()
+    } catch (error: any) {
+      setStatus(error.message.includes('already confirmed') ? 'successful' : 'failed')
+      if (error.message.includes('already confirmed')) success()
     } finally { setBusy(false) }
   }
   return <div className="narrow page"><p className="eyebrow">{p.method} PAYMENT</p><h1>{p.method === 'QR' ? 'Scan to pay' : 'Tap simulated NFC tag'}</h1><div className="banner">SIMULATION ONLY · DEMO CURRENCY<br /><small>No real money is processed.</small></div><Card><p className="muted">Amount</p><div className="amount">€{p.amount.toFixed(2)}</div>{p.method === 'QR' ? <><img className="qr" src={p.qr_image_url} alt="QR code for simulated payment" /><p className="hint">Scan with a phone on the same network.</p><p className="hint">Phone URL: <code>{p.phone_url || p.mock_url}</code></p><Btn kind="secondary" onClick={() => finish()} disabled={busy || status !== 'waiting'}>Approve on this device</Btn></> : <><div className="nfc">)))</div><input className="pin" maxLength={4} inputMode="numeric" value={pin} onChange={e => setPin(e.target.value.replace(/\D/g, ''))} placeholder="••••" /><Btn onClick={() => finish()} disabled={busy || pin.length !== 4 || status !== 'waiting'}>Detect simulated NFC tag</Btn></>}{status === 'waiting' && <p className="waiting">◌ Waiting for simulated payment…</p>}{status !== 'waiting' && <p className={'result ' + status}><Status s={status} /> {status === 'successful' ? 'Payment successful' : 'Payment ' + status}</p>}<Btn kind="danger" onClick={() => finish('fail')} disabled={status !== 'waiting' || busy}>Simulate payment failure</Btn></Card><Btn kind="ghost" onClick={back}>← Choose another method</Btn></div>
