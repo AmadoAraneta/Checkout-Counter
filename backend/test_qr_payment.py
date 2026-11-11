@@ -13,7 +13,7 @@ def create_qr_payment():
     return client.post('/api/payments', json={
         'session_id': 'DEMO-1001',
         'payment_method': 'QR',
-        'amount': 34.0,
+        'amount': 54.0,
     })
 
 
@@ -49,7 +49,7 @@ def test_qr_payment_accepts_provider_style_method_and_transaction_id_aliases():
         'session_id': 'DEMO-1001',
         'transaction_id': 'TX-PROVIDER-001',
         'method': 'QR',
-        'amount': 34.0,
+        'amount': 54.0,
         'currency': 'DEMO',
     })
     assert response.status_code == 200
@@ -69,7 +69,7 @@ def test_qr_confirmation_rejects_duplicate_confirmation():
 
 
 def test_qr_payment_creation_is_idempotent_for_same_token():
-    payload = {'session_id': 'DEMO-1001', 'payment_method': 'QR', 'amount': 34.0, 'payment_token': 'PAY-SIM-000123'}
+    payload = {'session_id': 'DEMO-1001', 'payment_method': 'QR', 'amount': 54.0, 'payment_token': 'PAY-SIM-000123'}
     first = client.post('/api/payments', json=payload)
     second = client.post('/api/payments', json=payload)
     assert first.status_code == 200
@@ -79,14 +79,14 @@ def test_qr_payment_creation_is_idempotent_for_same_token():
 
 
 def test_qr_payment_token_cannot_be_reused_for_another_checkout():
-    payload = {'session_id': 'DEMO-1001', 'payment_method': 'QR', 'amount': 34.0, 'payment_token': 'PAY-SIM-000123'}
+    payload = {'session_id': 'DEMO-1001', 'payment_method': 'QR', 'amount': 54.0, 'payment_token': 'PAY-SIM-000123'}
     client.post('/api/payments', json=payload)
-    collision = client.post('/api/payments', json={**payload, 'session_id': 'DEMO-1002', 'amount': 45.0})
+    collision = client.post('/api/payments', json={**payload, 'session_id': 'DEMO-1002', 'amount': 65.0})
     assert collision.status_code == 409
 
 
 def test_payment_method_and_non_finite_amount_are_rejected():
-    invalid_method = client.post('/api/payments', json={'session_id': 'DEMO-1001', 'payment_method': 'CARD', 'amount': 34})
+    invalid_method = client.post('/api/payments', json={'session_id': 'DEMO-1001', 'payment_method': 'CARD', 'amount': 54})
     assert invalid_method.status_code == 422
     invalid_amount = client.post('/api/payments', json={'session_id': 'DEMO-1001', 'payment_method': 'QR', 'amount': 'NaN'})
     assert invalid_amount.status_code == 422

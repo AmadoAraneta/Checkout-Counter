@@ -21,7 +21,6 @@ nav button:hover{color:#fff}
 .btn{border:0;border-radius:11px;padding:13px 19px;font-weight:700;cursor:pointer;margin:4px 0;transition:transform .15s ease,box-shadow .15s ease,background .15s ease}
 .btn:hover:not(:disabled){transform:translateY(-1px);box-shadow:0 5px 12px #263c4230}.btn:disabled{opacity:.45;cursor:not-allowed}
 .primary{background:#263c42;color:#fff}.primary:hover:not(:disabled){background:#172b30}.secondary{background:#f8ead9;color:#a94f16}.danger{background:#fff0eb;color:#ae3028}.ghost{background:transparent;color:#49636b;padding-left:0}
-.camera{height:300px;border:2px dashed #d4bda4;border-radius:15px;background:linear-gradient(135deg,#f6eee4,#eee1d1);margin-bottom:16px;overflow:hidden;display:grid;place-items:center;text-align:center;font-size:42px;color:#c58e5c}.camera small{display:block;font-size:13px;color:#718087}.camera video{height:100%;width:100%;object-fit:cover}
 label{display:block;font-weight:700;color:#40545a;margin:18px 0 8px}input,select{display:block;width:100%;margin-top:7px;padding:14px;border:1px solid #d8c9b8;border-radius:11px;font-size:16px;background:#fffdf9;color:#24313a}input:focus,select:focus{outline:3px solid #f6c99f;border-color:#ef8d3a}
 hr{border:0;border-top:1px solid #eadfd2;margin:28px 0}
 .error{background:#fff1ed;color:#a52c24;border:1px solid #f1c6bb;border-radius:11px;padding:13px;margin:16px 0}.global{max-width:1120px;margin:18px auto;padding:0 24px;display:flex;gap:15px;align-items:center}.global .error{flex:1}.global>button{border:0;background:none;color:#a52c24}

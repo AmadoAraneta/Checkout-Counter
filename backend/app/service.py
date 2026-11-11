@@ -4,6 +4,9 @@ from fastapi import HTTPException
 from .adapter import CartAdapter
 
 
+PARKING_FEE = 20.00
+
+
 def round_money(value: Any) -> float:
     return float(Decimal(str(value)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP))
 

@@ -1,4 +1,4 @@
-# Checkout Counter Demo — Workstream A
+# Checkout Counter Demo — Checkout Counter
 
 A local React + TypeScript + Vite frontend connected to a Python + FastAPI backend. QR is simulated; NFC can use the included ESP32 + RC522 serial reader. No real money is processed.
 
@@ -35,8 +35,8 @@ Open http://localhost:5173.
 
 ## Test flow
 
-1. Use manual Session ID `DEMO-1001` (or use the ZXing camera scanner with a barcode containing that text).
-2. Review the cart total (₱34.00) and continue.
+1. Enter Ticket Receipt ID `DEMO-1001` manually to load the purchase.
+2. Review the items subtotal (₱34.00) plus the fixed parking fee (₱20.00); total due is ₱54.00 and continue.
 3. Select simulated QR or NFC.
 4. For QR, scan the displayed code or click **Approve on this device**. The phone-friendly mock URL is served by the backend.
 5. For NFC, enter any four digits and detect the simulated NFC tag.
@@ -45,11 +45,16 @@ Open http://localhost:5173.
 
 ## Phone QR testing
 
-The backend is already bound to `0.0.0.0`. Find the laptop IP with `ipconfig` (Windows) or `ip addr`/`ifconfig` (macOS/Linux). Replace `localhost` in the generated URL with the laptop IP, for example:
+The backend is already bound to `0.0.0.0`. QR URLs now replace a loopback host such as `localhost` with the laptop's detected LAN IP automatically, so the phone can open the URL when both devices are on the same Wi-Fi or hotspot. Allow Python through the firewall if prompted.
 
-`http://192.168.1.25:5000/phone/PAY-ABC123`
+If the laptop has multiple network adapters, a VPN, or auto-detection chooses the wrong address, set `PUBLIC_BASE_URL` before starting the backend:
 
-Connect the phone and laptop to the same Wi-Fi/hotspot and allow Python through the firewall if prompted. The frontend polls the backend, so approving from the phone updates the checkout screen.
+```powershell
+$env:PUBLIC_BASE_URL="http://192.168.1.25:5000"
+python -m uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
+```
+
+The frontend polls the backend, so approving from the phone updates the checkout screen.
 
 ## Optional configuration
 
@@ -76,7 +81,7 @@ The QR option follows the Lab 4 simulated-payment workflow while using the Check
 4. The React payment screen polls `/api/payments/{token}` and advances to the existing receipt/history flow after success.
 5. Repeated confirmations return HTTP `409`, and reusing the same payment token is idempotent.
 
-The backend accepts the QR provider aliases `method` and `transaction_id` alongside the Checkout-Counter fields. Cart/session validation remains authoritative, so the payment amount must match the loaded cart total.
+The backend accepts the QR provider aliases `method` and `transaction_id` alongside the Checkout-Counter fields. Cart/session validation remains authoritative, so the payment amount must match the loaded cart total, including the fixed ₱20.00 parking fee.
 
 
 ## Physical ESP32 + RC522 NFC setup
