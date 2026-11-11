@@ -2,6 +2,18 @@ from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from typing import Literal
 from uuid import uuid4
+import json
+import os
+import threading
+import time
+
+import serial
+import json
+import os
+import threading
+import time
+
+import serial
 
 import qrcode
 from fastapi import FastAPI, HTTPException, Request
@@ -9,7 +21,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
-from .nfc_manager import NFCManager
 from .service import get_fixture_cart
 
 app = FastAPI(title='Checkout Counter Demo API')
@@ -31,7 +42,164 @@ CARTS = {
     },
 }
 PAYMENTS, TRANSACTIONS, AUDITS = {}, [], []
-NFC = NFCManager()
+
+# ESP32/RC522 serial integration. Override with NFC_SERIAL_PORT if needed.
+NFC_SERIAL_PORT = os.getenv('NFC_SERIAL_PORT', 'COM15')
+NFC_BAUD_RATE = int(os.getenv('NFC_BAUD_RATE', '115200'))
+NFC_STATE = {
+    'connected': False,
+    'port': NFC_SERIAL_PORT,
+    'baud_rate': NFC_BAUD_RATE,
+    'last_event': None,
+    'event_counter': 0,
+    'last_card_uid': None,
+    'last_card_at': None,
+    'last_key': None,
+    'key_sequence': '',
+    'error': None,
+}
+NFC_LOCK = threading.Lock()
+NFC_STOP = threading.Event()
+NFC_THREAD = None
+
+
+def _handle_nfc_event(event: dict) -> None:
+    with NFC_LOCK:
+        NFC_STATE['last_event'] = event
+        NFC_STATE['event_counter'] += 1
+        if event.get('event') == 'card_detected':
+            NFC_STATE['last_card_uid'] = str(event.get('uid', ''))
+            NFC_STATE['last_card_at'] = datetime.now(timezone.utc).isoformat()
+        elif event.get('event') == 'key_pressed':
+            key = str(event.get('key', ''))
+            NFC_STATE['last_key'] = key
+            if key.isdigit() and len(NFC_STATE['key_sequence']) < 16:
+                NFC_STATE['key_sequence'] += key
+            elif key == '*':
+                NFC_STATE['key_sequence'] = ''
+            elif key == '#':
+                pass
+
+
+def _nfc_serial_worker() -> None:
+    while not NFC_STOP.is_set():
+        try:
+            with serial.Serial(NFC_SERIAL_PORT, NFC_BAUD_RATE, timeout=1) as connection:
+                with NFC_LOCK:
+                    NFC_STATE['connected'] = True
+                    NFC_STATE['error'] = None
+                while not NFC_STOP.is_set():
+                    raw = connection.readline()
+                    if not raw:
+                        continue
+                    try:
+                        event = json.loads(raw.decode('utf-8', errors='ignore').strip())
+                        if isinstance(event, dict):
+                            _handle_nfc_event(event)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+        except (serial.SerialException, OSError) as exc:
+            with NFC_LOCK:
+                NFC_STATE['connected'] = False
+                NFC_STATE['error'] = str(exc)
+            time.sleep(2)
+    with NFC_LOCK:
+        NFC_STATE['connected'] = False
+
+
+@app.on_event('startup')
+def start_nfc_serial_listener():
+    global NFC_THREAD
+    NFC_STOP.clear()
+    NFC_THREAD = threading.Thread(target=_nfc_serial_worker, name='esp32-nfc-reader', daemon=True)
+    NFC_THREAD.start()
+
+
+@app.on_event('shutdown')
+def stop_nfc_serial_listener():
+    NFC_STOP.set()
+    if NFC_THREAD and NFC_THREAD.is_alive():
+        NFC_THREAD.join(timeout=2)
+
+
+# ESP32/RC522 serial integration. Override with NFC_SERIAL_PORT if needed.
+NFC_SERIAL_PORT = os.getenv('NFC_SERIAL_PORT', 'COM15')
+NFC_BAUD_RATE = int(os.getenv('NFC_BAUD_RATE', '115200'))
+NFC_STATE = {
+    'connected': False,
+    'port': NFC_SERIAL_PORT,
+    'baud_rate': NFC_BAUD_RATE,
+    'last_event': None,
+    'event_counter': 0,
+    'last_card_uid': None,
+    'last_card_at': None,
+    'last_key': None,
+    'key_sequence': '',
+    'error': None,
+}
+NFC_LOCK = threading.Lock()
+NFC_STOP = threading.Event()
+NFC_THREAD = None
+
+
+def _handle_nfc_event(event: dict) -> None:
+    with NFC_LOCK:
+        NFC_STATE['last_event'] = event
+        NFC_STATE['event_counter'] += 1
+        if event.get('event') == 'card_detected':
+            NFC_STATE['last_card_uid'] = str(event.get('uid', ''))
+            NFC_STATE['last_card_at'] = datetime.now(timezone.utc).isoformat()
+        elif event.get('event') == 'key_pressed':
+            key = str(event.get('key', ''))
+            NFC_STATE['last_key'] = key
+            if key.isdigit() and len(NFC_STATE['key_sequence']) < 16:
+                NFC_STATE['key_sequence'] += key
+            elif key == '*':
+                NFC_STATE['key_sequence'] = ''
+            elif key == '#':
+                pass
+
+
+def _nfc_serial_worker() -> None:
+    while not NFC_STOP.is_set():
+        try:
+            with serial.Serial(NFC_SERIAL_PORT, NFC_BAUD_RATE, timeout=1) as connection:
+                with NFC_LOCK:
+                    NFC_STATE['connected'] = True
+                    NFC_STATE['error'] = None
+                while not NFC_STOP.is_set():
+                    raw = connection.readline()
+                    if not raw:
+                        continue
+                    try:
+                        event = json.loads(raw.decode('utf-8', errors='ignore').strip())
+                        if isinstance(event, dict):
+                            _handle_nfc_event(event)
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+        except (serial.SerialException, OSError) as exc:
+            with NFC_LOCK:
+                NFC_STATE['connected'] = False
+                NFC_STATE['error'] = str(exc)
+            time.sleep(2)
+    with NFC_LOCK:
+        NFC_STATE['connected'] = False
+
+
+@app.on_event('startup')
+def start_nfc_serial_listener():
+    global NFC_THREAD
+    NFC_STOP.clear()
+    NFC_THREAD = threading.Thread(target=_nfc_serial_worker, name='esp32-nfc-reader', daemon=True)
+    NFC_THREAD.start()
+
+
+@app.on_event('shutdown')
+def stop_nfc_serial_listener():
+    NFC_STOP.set()
+    if NFC_THREAD and NFC_THREAD.is_alive():
+        NFC_THREAD.join(timeout=2)
+
 
 
 def now() -> datetime:
@@ -81,8 +249,7 @@ def payment_result(payment: dict) -> dict:
             'waiting': 'PENDING',
             'successful': 'SUCCESS',
             'failed': 'FAILED',
-        'expired': 'EXPIRED',
-        'cancelled': 'CANCELLED',
+            'expired': 'EXPIRED',
         }.get(status, status.upper()),
         'transaction_status': payment.get('transaction_status', 'PENDING_PAYMENT'),
         'simulation_reference': payment.get('simulation_reference'),
@@ -90,8 +257,7 @@ def payment_result(payment: dict) -> dict:
             'waiting': 'Waiting for simulated payment',
             'successful': 'Payment successful',
             'failed': 'Payment failed',
-        'expired': 'Payment expired',
-        'cancelled': 'Payment cancelled',
+            'expired': 'Payment expired',
         }.get(status, status),
     }
     return result
@@ -115,6 +281,38 @@ def root():
 @app.get('/api/health')
 def health():
     return {'status': 'ok', 'demo_mode': True}
+
+
+@app.get('/api/nfc/status')
+def nfc_status():
+    with NFC_LOCK:
+        return dict(NFC_STATE)
+
+
+@app.post('/api/nfc/reset')
+def nfc_reset():
+    with NFC_LOCK:
+        NFC_STATE['last_card_uid'] = None
+        NFC_STATE['last_card_at'] = None
+        NFC_STATE['last_key'] = None
+        NFC_STATE['key_sequence'] = ''
+    return {'reset': True}
+
+
+@app.get('/api/nfc/status')
+def nfc_status():
+    with NFC_LOCK:
+        return dict(NFC_STATE)
+
+
+@app.post('/api/nfc/reset')
+def nfc_reset():
+    with NFC_LOCK:
+        NFC_STATE['last_card_uid'] = None
+        NFC_STATE['last_card_at'] = None
+        NFC_STATE['last_key'] = None
+        NFC_STATE['key_sequence'] = ''
+    return {'reset': True}
 
 
 @app.get('/api/carts/{session_id}')
@@ -172,56 +370,6 @@ def create_payment(request: PaymentRequest, http_request: Request):
     }
 
 
-@app.post('/api/payments/{token}/nfc/start')
-def start_nfc_payment(token: str):
-    payment = PAYMENTS.get(token)
-    if not payment:
-        raise HTTPException(404, 'Payment token not found.')
-    if payment['method'] != 'NFC':
-        raise HTTPException(400, 'NFC start is only available for NFC payments.')
-    if payment['status'] != 'waiting':
-        return {**payment_result(payment), 'nfc': NFC.status(token)}
-    try:
-        nfc = NFC.start(token, payment['transaction_id'], payment['amount'])
-    except RuntimeError as exc:
-        raise HTTPException(503, str(exc)) from exc
-    return {**payment_result(payment), 'nfc': nfc, 'hardware_required': True}
-
-
-@app.get('/api/payments/{token}/nfc/status')
-def nfc_payment_status(token: str):
-    payment = PAYMENTS.get(token)
-    if not payment:
-        raise HTTPException(404, 'Payment token not found.')
-    if payment['status'] == 'waiting' and now() > payment['expires_at']:
-        NFC.cancel(token)
-        payment['status'] = 'expired'
-        payment['transaction_status'] = 'PAYMENT_EXPIRED'
-    nfc = NFC.status(token)
-    if nfc['status'] == 'successful' and payment['status'] == 'waiting':
-        finish(token, 'successful')
-    elif nfc['status'] == 'failed' and payment['status'] == 'waiting':
-        finish(token, 'failed')
-    elif nfc['status'] == 'cancelled' and payment['status'] == 'waiting':
-        payment['status'] = 'cancelled'
-        payment['transaction_status'] = 'PAYMENT_CANCELLED'
-    return {**payment_result(payment), 'nfc': nfc, 'hardware_required': True}
-
-
-@app.post('/api/payments/{token}/nfc/cancel')
-def cancel_nfc_payment(token: str):
-    payment = PAYMENTS.get(token)
-    if not payment:
-        raise HTTPException(404, 'Payment token not found.')
-    if payment['method'] != 'NFC':
-        raise HTTPException(400, 'NFC cancellation is only available for NFC payments.')
-    nfc = NFC.cancel(token)
-    if payment['status'] == 'waiting':
-        payment['status'] = 'cancelled'
-        payment['transaction_status'] = 'PAYMENT_CANCELLED'
-    return {**payment_result(payment), 'nfc': nfc, 'hardware_required': True}
-
-
 @app.get('/api/payments/{token}/qr')
 def payment_qr(token: str):
     payment = PAYMENTS.get(token)
@@ -262,7 +410,7 @@ def finish(token: str, state: str):
         }
         TRANSACTIONS.append(transaction)
         AUDITS.extend([
-            {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'PAYMENT_SUCCESS', 'message': f"{payment['method']} payment completed", 'timestamp': now()},
+            {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'PAYMENT_SUCCESS', 'message': f"Simulated {payment['method']} payment completed", 'timestamp': now()},
             {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'RECEIPT_CREATED', 'message': 'Receipt generated for checkout', 'timestamp': now()},
         ])
     return payment_result(payment)
@@ -282,9 +430,6 @@ def confirm_payment(token: str, payload: ConfirmationRequest):
 
 @app.post('/api/payments/{token}/complete')
 def complete(token: str):
-    payment = PAYMENTS.get(token)
-    if payment and payment['method'] == 'NFC':
-        raise HTTPException(409, 'Hardware NFC payments must complete through the NFC reader service.')
     return finish(token, 'successful')
 
 
@@ -310,7 +455,7 @@ def phone_page(token: str):
         raise HTTPException(404, 'Payment token not found')
     return HTMLResponse(f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Demo QR Payment</title>
 <style>body{{font-family:Arial,sans-serif;max-width:460px;margin:30px auto;padding:20px;background:#f5f7fa;color:#153b5b}}.card{{background:#fff;padding:26px;border-radius:18px;box-shadow:0 8px 24px #193b5b1a}}button{{width:100%;padding:15px;margin-top:12px;border:0;border-radius:10px;font-size:16px;font-weight:bold;cursor:pointer}}.ok{{background:#153b5b;color:#fff}}.bad{{background:#fff0ee;color:#ae3028}}.demo{{background:#fff3dd;border:1px solid #f3d394;border-radius:10px;padding:12px;font-size:13px}}#out{{white-space:pre-wrap;text-align:center;font-weight:bold}}</style>
-<div class="card"><h1>Demo QR Payment</h1><div class="demo"><b>SIMULATION ONLY</b><br>No real money is processed.</div><p>Transaction: <b>{payment['transaction_id']}</b></p><p>Amount: <b>€{payment['amount']:.2f} DEMO</b></p><button class="ok" onclick="confirmPayment('DEMO-APPROVE')">Approve simulated payment</button><button class="bad" onclick="confirmPayment('DEMO-DECLINE')">Decline simulated payment</button><p id="out"></p></div>
+<div class="card"><h1>Demo QR Payment</h1><div class="demo"><b>SIMULATION ONLY</b><br>No real money is processed.</div><p>Transaction: <b>{payment['transaction_id']}</b></p><p>Amount: <b>₱{payment['amount']:.2f} DEMO</b></p><button class="ok" onclick="confirmPayment('DEMO-APPROVE')">Approve simulated payment</button><button class="bad" onclick="confirmPayment('DEMO-DECLINE')">Decline simulated payment</button><p id="out"></p></div>
 <script>async function confirmPayment(value){{document.querySelectorAll('button').forEach(b=>b.disabled=true);const r=await fetch('/api/payments/{token}/confirm',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{confirmation:value}})}});const d=await r.json();if(r.ok&&d.status==='successful'){{document.getElementById('out').textContent='PAYMENT APPROVED — opening receipt…';setTimeout(()=>window.location.href='/receipt/{token}',650);}}else{{document.getElementById('out').textContent=r.status===409?'DUPLICATE: this payment was already confirmed':(r.ok?'PAYMENT DECLINED':((d.detail&&d.detail.detail)||'Payment already confirmed'));}}}}</script>''')
 
 
@@ -325,13 +470,11 @@ def receipt_page(token: str):
     timestamp = confirmed['timestamp'].isoformat() if confirmed else now().isoformat()
     return HTMLResponse(f'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><title>Payment Sent | Checkout Counter</title>
 <style>body{{font-family:Arial,sans-serif;max-width:560px;margin:42px auto;padding:18px;background:#eef8f2}}.card{{background:#fff;border-radius:22px;padding:30px;box-shadow:0 10px 30px #165c3518;text-align:center}}.check{{font-size:44px;color:#13795b}}.sent{{color:#13795b;font-size:30px;font-weight:bold}}.row{{display:flex;justify-content:space-between;gap:20px;padding:14px 0;border-bottom:1px solid #e3ebe6;text-align:left}}.label{{color:#687786}}.value{{font-weight:bold;text-align:right;overflow-wrap:anywhere}}.warning{{margin-top:22px;background:#fff7df;border:1px solid #f3d394;border-radius:10px;padding:12px;text-align:left;font-size:13px}}</style>
-<div class="card"><div class="check">✓</div><h1 class="sent">PAYMENT SENT</h1><p>Demo payment approved successfully</p><h2>€{payment['amount']:.2f} DEMO</h2><div class="row"><span class="label">Date and time</span><b class="value">{timestamp}</b></div><div class="row"><span class="label">Payment method</span><b class="value">QR</b></div><div class="row"><span class="label">Transaction ID</span><b class="value">{payment['transaction_id']}</b></div><div class="row"><span class="label">Payment ID</span><b class="value">{payment['payment_id']}</b></div><div class="row"><span class="label">Reference number</span><b class="value">{payment['simulation_reference']}</b></div><div class="warning"><b>SIMULATION ONLY</b><br>No real money was sent.</div></div>''')
+<div class="card"><div class="check">✓</div><h1 class="sent">PAYMENT SENT</h1><p>Demo payment approved successfully</p><h2>₱{payment['amount']:.2f} DEMO</h2><div class="row"><span class="label">Date and time</span><b class="value">{timestamp}</b></div><div class="row"><span class="label">Payment method</span><b class="value">QR</b></div><div class="row"><span class="label">Transaction ID</span><b class="value">{payment['transaction_id']}</b></div><div class="row"><span class="label">Payment ID</span><b class="value">{payment['payment_id']}</b></div><div class="row"><span class="label">Reference number</span><b class="value">{payment['simulation_reference']}</b></div><div class="warning"><b>SIMULATION ONLY</b><br>No real money was sent.</div></div>''')
 
 
 @app.post('/api/reset')
 def reset_demo():
-    if NFC.payment_token:
-        NFC.cancel(NFC.payment_token)
     PAYMENTS.clear()
     TRANSACTIONS.clear()
     AUDITS.clear()

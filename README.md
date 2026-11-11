@@ -1,6 +1,6 @@
 # Checkout Counter Demo — Workstream A
 
-A local React + TypeScript + Vite frontend connected to a Python + FastAPI backend. QR and NFC are simulations only; no real money is processed.
+A local React + TypeScript + Vite frontend connected to a Python + FastAPI backend. QR is simulated; NFC can use the included ESP32 + RC522 serial reader. No real money is processed.
 
 ## Run in Visual Studio Code
 
@@ -16,6 +16,8 @@ source .venv/bin/activate
 # Windows PowerShell instead:
 # .venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
+# Optional: set the ESP32 serial port if it is not COM15
+$env:NFC_SERIAL_PORT="COM15"
 uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
 ```
 
@@ -34,7 +36,7 @@ Open http://localhost:5173.
 ## Test flow
 
 1. Use manual Session ID `DEMO-1001` (or use the ZXing camera scanner with a barcode containing that text).
-2. Review the cart total (€34.00) and continue.
+2. Review the cart total (₱34.00) and continue.
 3. Select simulated QR or NFC.
 4. For QR, scan the displayed code or click **Approve on this device**. The phone-friendly mock URL is served by the backend.
 5. For NFC, enter any four digits and detect the simulated NFC tag.
@@ -76,36 +78,17 @@ The QR option follows the Lab 4 simulated-payment workflow while using the Check
 
 The backend accepts the QR provider aliases `method` and `transaction_id` alongside the Checkout-Counter fields. Cart/session validation remains authoritative, so the payment amount must match the loaded cart total.
 
-## Hardware NFC payment integration
 
-The NFC option now uses the payment state machine and serial protocol from the companion `nfc_payment_service_vscode` project. The combined project includes the ESP32 firmware in `firmware/esp32_rc522_keypad.ino` and must be flashed to an ESP32 connected to an RC522 reader and matrix keypad.
+## Physical ESP32 + RC522 NFC setup
 
-Configure the backend before starting it:
+The backend listens to the ESP32 JSON serial protocol on `COM15` at 115200 baud. The included firmware is `esp32_rfid_keypad.ino` in the project root. Upload it with Arduino IDE, close Arduino Serial Monitor, then start the backend. The NFC screen polls `/api/nfc/status`, displays the detected card UID, and also receives keypad digits.
 
-```env
-NFC_SERIAL_PORT=/dev/ttyUSB0
-NFC_APPROVED_UIDS=04A1B2C3D4,DEADBEEF
-NFC_BAUDRATE=115200
-NFC_SERIAL_TIMEOUT=1
+The serial port can be changed with PowerShell before starting the backend:
+
+```powershell
+$env:NFC_SERIAL_PORT="COM15"
+$env:NFC_BAUD_RATE="115200"
+python -m uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
 ```
 
-The backend starts one serial reader for the active Checkout-Counter payment. The cart total is sent as the requested NFC amount; the keypad must submit that exact amount followed by `#`, then an approved NFC UID must be read. The NFC service's original optional parking-fee calculation is configured to `0.00` by default in the checkout integration so it cannot silently change the cart/order total; override `NFC_PARKING_FEE` only when that fee is an intentional part of the order.
-
-The integrated NFC endpoints are:
-
-```text
-POST /api/payments/{token}/nfc/start
-GET  /api/payments/{token}/nfc/status
-POST /api/payments/{token}/nfc/cancel
-```
-
-The browser polls the status endpoint. Success is converted into the existing Checkout-Counter transaction, receipt, and audit flow; failure, cancellation, serial/device errors, and the five-minute payment timeout remain visible as payment states and do not create a completed order.
-
-The ESP32-to-backend serial protocol is unchanged:
-
-```text
-KEYPAD:6
-KEYPAD:.
-KEYPAD:#
-NFC_TAG:04A1B2C3D4
-```
+You can verify the reader connection at `http://localhost:5000/api/nfc/status`.
