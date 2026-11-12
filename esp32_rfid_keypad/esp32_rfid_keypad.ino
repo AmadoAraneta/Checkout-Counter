@@ -56,7 +56,7 @@ char keyMap[ROWS][COLS] = {
   {'1', '2', '3'},
   {'4', '5', '6'},
   {'7', '8', '9'},
-  {'*', '0', '#'}
+  {'*', '0', '.'}
 };
 
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);

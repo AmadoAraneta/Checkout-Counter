@@ -89,12 +89,10 @@ def _handle_nfc_event(event: dict) -> None:
         elif event.get('event') == 'key_pressed':
             key = str(event.get('key', ''))
             NFC_STATE['last_key'] = key
-            if key.isdigit() and len(NFC_STATE['key_sequence']) < 16:
+            if (key.isdigit() or (key == '.' and '.' not in NFC_STATE['key_sequence'])) and len(NFC_STATE['key_sequence']) < 16:
                 NFC_STATE['key_sequence'] += key
             elif key == '*':
                 NFC_STATE['key_sequence'] = ''
-            elif key == '#':
-                pass
 
 
 def _nfc_serial_worker() -> None:
