@@ -4,6 +4,8 @@ A local React + TypeScript + Vite frontend connected to a Python + FastAPI backe
 
 ## Run in Visual Studio Code
 
+On Windows, once dependencies are installed in `backend/.venv`, run `./backend/start.ps1` from the project root (or `./start.ps1` from `backend`). This uses the project Python environment explicitly and avoids missing-module errors from a globally installed Uvicorn. Environment variables set in that terminal are inherited.
+
 Extract the ZIP and open the `checkout-system` folder in VS Code. Open two terminals.
 
 ### Terminal 1: backend
@@ -69,9 +71,37 @@ VITE_API_URL=http://localhost:5000/api
 - `backend/app/main.py`: FastAPI routes, Pydantic request validation, mock carts, in-memory payments/transactions/audits, CORS, and phone mock page.
 - `frontend/src/main.tsx`: typed React views for scan, cart summary, payment selection, QR/NFC payment, receipt, and transaction history.
 - The frontend uses one centralized JSON API helper and validates totals before enabling payment.
-- In-memory data resets when the backend restarts. This is intentional for a deterministic demo.
+- Pending payments reset when the backend restarts. Completed transactions and audit events can be archived in Firestore using the setup below.
+
+## Firestore archive (mart-parking-fdd6b)
+
+The backend archives successful checkout receipts and their audit events in the dedicated collection `checkout_counter_9a73c8f1b4624dd49ac3d5d4e2347f69`. It only creates documents with automatically generated IDs: it never updates or deletes Firestore documents, seeds carts, enumerates other collections, or deploys security rules. Existing collections are untouched. `/api/reset` clears local demo state only; archived history remains visible.
+
+1. Install the updated backend requirements with `python -m pip install -r requirements.txt` from `backend`.
+2. Obtain server credentials for `mart-parking-fdd6b` from Firebase project settings > Service accounts, or use Google Application Default Credentials. Keep any credential JSON outside this repository. The browser Firebase configuration alone does not authenticate this Python backend.
+3. In the same PowerShell terminal that starts the backend, run:
+
+```powershell
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:/path/outside/repository/service-account.json"
+$env:CHECKOUT_FIRESTORE_ENABLED="true"
+python -m uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
+```
+
+`backend/start.ps1` automatically loads `backend/.env` when present. Copy `.env.example` to `.env` to configure a new installation; both `.env` and `service-account.json` are gitignored. Relative credential paths resolve from the backend folder. Settings already defined in the terminal take precedence over `.env`. For direct Uvicorn startup from `backend`, add `--env-file .env`. Without `CHECKOUT_FIRESTORE_ENABLED=true`, the existing in-memory demo continues to work. `/api/health` reports the selected archive mode, not a live connection check. With Firestore enabled, a failed archive returns HTTP 503 and leaves the payment waiting so it can be retried. History and audit routes read only the dedicated collection. Pending payments, demo carts, and the backend phone receipt page remain local; archived history and audit events remain available after a restart.
+
+No live database migration or credentials are included. The provided web API key and Analytics settings are unnecessary for this backend integration. Server access uses Google IAM; existing browser security rules remain unchanged. Successful simulated payments are still demo data. Run local tests with `CHECKOUT_FIRESTORE_ENABLED=false` to avoid writing test payments to Firestore.
 
 ## Integrated QR payment flow
+
+### Shopping group ticket lookup
+
+Enter `1002` or `TKT-1002` in **Ticket ID**. Checkout queries `shoppingCartWorkspaces/shopping-cart/shoppingSessions` in project `mart-parking-fdd6b`, database `(default)`, for `ticket_no == "TKT-1002"` and `status == "ready_for_checkout"`. Sessions without a ticket field or another status are excluded. Multiple matches are displayed for individual selection; all payment operations identify the cart by its session document ID. Demo IDs retain their local behavior.
+
+Cart contents come from `items`; `totalCentavos` is an integer converted to pesos and validated against the items. Supported item prices are peso `unitPrice`/`unit_price`/`price` or integer `unitPriceCentavos`/`priceCentavos`. The existing PHP 20 parking fee is added separately. Payment creation rereads the selected session and rejects changed totals or sessions no longer ready. The receipt preserves that session ID and the ticket number in the checkout archive.
+
+The source collection is read-only. Submit a cart using `1002` through the shopping team's dashboard to create a real test record; the checkout app does not seed it. The existing credential file belongs to `smart-shopping-cart-33ab9`; that identity must have access to `mart-parking-fdd6b`, or use a credential supplied for the correct project. Creating a new Firebase project is unnecessary.
+
+Pending payments remain local. The application does not yet mark a source session as paid or enforce cross-system duplicate checkout prevention; coordinate this with the shopping group. A paid status must apply to individual session IDs, not the shared ticket number.
 
 The QR option follows the Lab 4 simulated-payment workflow while using the Checkout-Counter React screens:
 

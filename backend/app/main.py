@@ -25,6 +25,8 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 
 from .service import PARKING_FEE, get_fixture_cart
+from . import firestore_store
+from . import shopping_sessions
 
 app = FastAPI(title='Checkout Counter Demo API')
 app.add_middleware(CORSMiddleware, allow_origins=['*'], allow_methods=['*'], allow_headers=['*'])
@@ -220,8 +222,9 @@ def cart_or_404(session_id: str):
         cart = fixture
     else:
         if clean_id.upper() not in CARTS:
-            raise HTTPException(404, 'Cart session not found. Try DEMO-1001 or SHOP-20260928-0007.')
-        cart = CARTS[clean_id.upper()]
+            cart = shopping_sessions.lookup(clean_id)
+        else:
+            cart = CARTS[clean_id.upper()]
 
     subtotal = round(float(cart.get('subtotal', cart['total'])), 2)
     return {**cart, 'subtotal': subtotal, 'parking_fee': PARKING_FEE, 'total': round(subtotal + PARKING_FEE, 2)}
@@ -326,7 +329,8 @@ def root():
 
 @app.get('/api/health')
 def health():
-    return {'status': 'ok', 'demo_mode': True}
+    return {'status': 'ok', 'demo_mode': True,
+            'archive': 'firestore' if firestore_store.enabled() else 'memory'}
 
 
 @app.get('/api/nfc/status')
@@ -366,6 +370,13 @@ def get_cart(session_id: str):
     return cart_or_404(session_id)
 
 
+@app.get('/api/tickets/{ticket}/sessions')
+def ticket_sessions(ticket: str):
+    carts = shopping_sessions.find_ticket(ticket)
+    return [{**cart, 'parking_fee': PARKING_FEE,
+             'total': round(cart['subtotal'] + PARKING_FEE, 2)} for cart in carts]
+
+
 @app.post('/api/payments')
 def create_payment(request: PaymentRequest, http_request: Request):
     session_id = request.session_id or request.transaction_id
@@ -391,6 +402,7 @@ def create_payment(request: PaymentRequest, http_request: Request):
         'payment_id': uid('PAYMENT-SIM'),
         'transaction_id': request.transaction_id or uid('TXN'),
         'session_id': cart['session_id'],
+        'cart_snapshot': cart,
         'amount': request.amount,
         'method': payment_method,
         'status': 'waiting',
@@ -443,24 +455,29 @@ def finish(token: str, state: str):
         raise HTTPException(404, 'Payment token not found.')
     if payment['status'] != 'waiting':
         return payment_result(payment)
+    payment = dict(payment)
     payment['status'] = state
     payment['transaction_status'] = 'PAYMENT_SUCCESS' if state == 'successful' else 'PAYMENT_FAILED'
     if state == 'successful':
         payment['confirmed_at'] = now()
-        cart = cart_or_404(payment['session_id'])
+        cart = payment.get('cart_snapshot') or cart_or_404(payment['session_id'])
         transaction = {
             'transaction_id': payment['transaction_id'], 'cart_id': cart['cart_id'],
             'session_id': cart['session_id'], 'subtotal': cart['subtotal'],
+            'ticket_no': cart.get('ticket_no'),
             'parking_fee': cart['parking_fee'], 'amount': payment['amount'],
             'payment_method': payment['method'], 'timestamp': now(),
             'payment_status': 'successful', 'items': cart['items'],
             'payment_id': payment['payment_id'], 'simulation_reference': payment['simulation_reference'],
         }
-        TRANSACTIONS.append(transaction)
-        AUDITS.extend([
+        events = [
             {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'PAYMENT_SUCCESS', 'message': f"Simulated {payment['method']} payment completed", 'timestamp': now()},
             {'event_id': uid('AUD'), 'transaction_id': transaction['transaction_id'], 'event_type': 'RECEIPT_CREATED', 'message': 'Receipt generated for checkout', 'timestamp': now()},
-        ])
+        ]
+        firestore_store.archive(transaction, events)
+        TRANSACTIONS.append(transaction)
+        AUDITS.extend(events)
+    PAYMENTS[token] = payment
     return payment_result(payment)
 
 
@@ -512,11 +529,15 @@ def fail(token: str):
 
 @app.get('/api/transactions')
 def transactions():
+    if firestore_store.enabled():
+        return firestore_store.transactions()
     return list(reversed(TRANSACTIONS))
 
 
 @app.get('/api/transactions/{tid}/audit')
 def audit(tid: str):
+    if firestore_store.enabled():
+        return firestore_store.audits(tid)
     return [event for event in AUDITS if event['transaction_id'] == tid]
 
 
