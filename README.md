@@ -18,8 +18,8 @@ source .venv/bin/activate
 # Windows PowerShell instead:
 # .venv\\Scripts\\Activate.ps1
 pip install -r requirements.txt
-# Optional: set the ESP32 serial port if it is not COM15
-$env:NFC_SERIAL_PORT="COM15"
+# Optional: set the ESP32 serial port if it is not COM16
+$env:NFC_SERIAL_PORT="COM16"
 uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
 ```
 
@@ -116,12 +116,12 @@ The backend accepts the QR provider aliases `method` and `transaction_id` alongs
 
 ## Physical ESP32 + RC522 NFC setup
 
-The backend listens to the ESP32 JSON serial protocol on `COM15` at 115200 baud. The included firmware is `esp32_rfid_keypad.ino` in the project root. Upload it with Arduino IDE, close Arduino Serial Monitor, then start the backend. The NFC screen polls `/api/nfc/status`, displays the detected card UID, and also receives keypad digits.
+The backend listens to the ESP32 JSON serial protocol on `COM16` at 115200 baud. The included firmware is `esp32_rfid_keypad.ino` in the project root. Upload it with Arduino IDE, close Arduino Serial Monitor, then start the backend. The NFC screen polls `/api/nfc/status`, displays the detected card UID, and also receives keypad digits.
 
 The serial port can be changed with PowerShell before starting the backend:
 
 ```powershell
-$env:NFC_SERIAL_PORT="COM15"
+$env:NFC_SERIAL_PORT="COM16"
 $env:NFC_BAUD_RATE="115200"
 python -m uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
 ```

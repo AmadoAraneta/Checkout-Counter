@@ -11,14 +11,7 @@ import time
 from urllib.parse import urlsplit
 
 import serial
-import json
-import os
-import threading
-import time
 
-import serial
-
-import qrcode
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
@@ -49,7 +42,7 @@ CARTS = {
 PAYMENTS, TRANSACTIONS, AUDITS = {}, [], []
 
 # ESP32/RC522 serial integration. Override with NFC_SERIAL_PORT if needed.
-NFC_SERIAL_PORT = os.getenv('NFC_SERIAL_PORT', 'COM15')
+NFC_SERIAL_PORT = os.getenv('NFC_SERIAL_PORT', 'COM16')
 NFC_BAUD_RATE = int(os.getenv('NFC_BAUD_RATE', '115200'))
 NFC_STATE = {
     'connected': False,
@@ -125,86 +118,6 @@ def stop_nfc_serial_listener():
     NFC_STOP.set()
     if NFC_THREAD and NFC_THREAD.is_alive():
         NFC_THREAD.join(timeout=2)
-
-
-# ESP32/RC522 serial integration. Override with NFC_SERIAL_PORT if needed.
-NFC_SERIAL_PORT = os.getenv('NFC_SERIAL_PORT', 'COM15')
-NFC_BAUD_RATE = int(os.getenv('NFC_BAUD_RATE', '115200'))
-NFC_STATE = {
-    'connected': False,
-    'port': NFC_SERIAL_PORT,
-    'baud_rate': NFC_BAUD_RATE,
-    'last_event': None,
-    'event_counter': 0,
-    'last_card_uid': None,
-    'last_card_at': None,
-    'last_key': None,
-    'key_sequence': '',
-    'error': None,
-}
-NFC_LOCK = threading.Lock()
-NFC_STOP = threading.Event()
-NFC_THREAD = None
-
-
-def _handle_nfc_event(event: dict) -> None:
-    with NFC_LOCK:
-        NFC_STATE['last_event'] = event
-        NFC_STATE['event_counter'] += 1
-        if event.get('event') == 'card_detected':
-            NFC_STATE['last_card_uid'] = str(event.get('uid', ''))
-            NFC_STATE['last_card_at'] = datetime.now(timezone.utc).isoformat()
-        elif event.get('event') == 'key_pressed':
-            key = str(event.get('key', ''))
-            NFC_STATE['last_key'] = key
-            if key.isdigit() and len(NFC_STATE['key_sequence']) < 16:
-                NFC_STATE['key_sequence'] += key
-            elif key == '*':
-                NFC_STATE['key_sequence'] = ''
-            elif key == '#':
-                pass
-
-
-def _nfc_serial_worker() -> None:
-    while not NFC_STOP.is_set():
-        try:
-            with serial.Serial(NFC_SERIAL_PORT, NFC_BAUD_RATE, timeout=1) as connection:
-                with NFC_LOCK:
-                    NFC_STATE['connected'] = True
-                    NFC_STATE['error'] = None
-                while not NFC_STOP.is_set():
-                    raw = connection.readline()
-                    if not raw:
-                        continue
-                    try:
-                        event = json.loads(raw.decode('utf-8', errors='ignore').strip())
-                        if isinstance(event, dict):
-                            _handle_nfc_event(event)
-                    except (json.JSONDecodeError, UnicodeDecodeError):
-                        continue
-        except (serial.SerialException, OSError) as exc:
-            with NFC_LOCK:
-                NFC_STATE['connected'] = False
-                NFC_STATE['error'] = str(exc)
-            time.sleep(2)
-    with NFC_LOCK:
-        NFC_STATE['connected'] = False
-
-
-@app.on_event('startup')
-def start_nfc_serial_listener():
-    global NFC_THREAD
-    NFC_STOP.clear()
-    NFC_THREAD = threading.Thread(target=_nfc_serial_worker, name='esp32-nfc-reader', daemon=True)
-    NFC_THREAD.start()
-
-
-@app.on_event('shutdown')
-def stop_nfc_serial_listener():
-    NFC_STOP.set()
-    if NFC_THREAD and NFC_THREAD.is_alive():
-        NFC_THREAD.join(timeout=2)
-
 
 
 def now() -> datetime:
@@ -349,22 +262,6 @@ def nfc_reset():
     return {'reset': True}
 
 
-@app.get('/api/nfc/status')
-def nfc_status():
-    with NFC_LOCK:
-        return dict(NFC_STATE)
-
-
-@app.post('/api/nfc/reset')
-def nfc_reset():
-    with NFC_LOCK:
-        NFC_STATE['last_card_uid'] = None
-        NFC_STATE['last_card_at'] = None
-        NFC_STATE['last_key'] = None
-        NFC_STATE['key_sequence'] = ''
-    return {'reset': True}
-
-
 @app.get('/api/carts/{session_id}')
 def get_cart(session_id: str):
     return cart_or_404(session_id)
@@ -415,7 +312,7 @@ def create_payment(request: PaymentRequest, http_request: Request):
         public_base = phone_base_url(http_request)
         phone_url = public_base + f'/phone/{token}'
         payment['phone_url'] = phone_url
-        payment['qr_image_url'] = public_base + f'/api/payments/{token}/qr'
+        payment['qr_image_url'] = str(http_request.base_url).rstrip('/') + f'/api/payments/{token}/qr'
         payment['mock_url'] = phone_url
     else:
         payment['mock_url'] = str(http_request.base_url).rstrip('/') + f'/mock-payment/{token}'
