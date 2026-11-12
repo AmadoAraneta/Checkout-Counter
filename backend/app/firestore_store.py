@@ -1,7 +1,14 @@
 """Append-only checkout archive, isolated from the project's other collections."""
 import os
+from functools import lru_cache
+from pathlib import Path
 
 from fastapi import HTTPException
+from dotenv import load_dotenv
+
+
+BACKEND_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(BACKEND_DIR / '.env', override=False)
 
 
 PROJECT_ID = 'mart-parking-fdd6b'
@@ -13,9 +20,41 @@ def enabled():
     return os.getenv('CHECKOUT_FIRESTORE_ENABLED', 'false').lower() == 'true'
 
 
-def collection():
+def credential_path():
+    configured = os.getenv('GOOGLE_APPLICATION_CREDENTIALS')
+    if not configured:
+        return None
+    path = Path(configured).expanduser()
+    return str(path if path.is_absolute() else BACKEND_DIR / path)
+
+
+@lru_cache(maxsize=1)
+def client():
     from google.cloud import firestore
-    return firestore.Client(project=PROJECT_ID).collection(COLLECTION)
+    from google.oauth2 import service_account
+
+    credentials_file = credential_path()
+    options = {'project': PROJECT_ID}
+    if credentials_file:
+        if not Path(credentials_file).is_file():
+            raise FileNotFoundError(f'Firestore credential file was not found: {credentials_file}')
+        options['credentials'] = service_account.Credentials.from_service_account_file(credentials_file)
+    return firestore.Client(**options)
+
+
+def collection():
+    return client().collection(COLLECTION)
+
+
+def status():
+    if not enabled():
+        return {'enabled': False, 'connected': False, 'project': PROJECT_ID, 'collection': COLLECTION}
+    try:
+        next(collection().limit(1).stream(), None)
+        return {'enabled': True, 'connected': True, 'project': PROJECT_ID, 'collection': COLLECTION}
+    except Exception as exc:
+        return {'enabled': True, 'connected': False, 'project': PROJECT_ID,
+                'collection': COLLECTION, 'error': str(exc)}
 
 
 def archive(transaction, events):

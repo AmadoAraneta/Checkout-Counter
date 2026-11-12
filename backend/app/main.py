@@ -162,6 +162,18 @@ def cart_or_404(session_id: str):
     return {**cart, 'subtotal': subtotal, 'parking_fee': PARKING_FEE, 'total': round(subtotal + PARKING_FEE, 2)}
 
 
+def completed_transaction(session_id: str | None = None, ticket_no: str | None = None):
+    records = firestore_store.transactions() if firestore_store.enabled() else list(TRANSACTIONS)
+    for transaction in records:
+        if transaction.get('payment_status') != 'successful':
+            continue
+        if session_id and transaction.get('session_id') == session_id:
+            return transaction
+        if ticket_no and str(transaction.get('ticket_no', '')).upper() == ticket_no.upper():
+            return transaction
+    return None
+
+
 class PaymentRequest(BaseModel):
     session_id: str | None = Field(default=None, min_length=1)
     transaction_id: str | None = Field(default=None, min_length=1)
@@ -265,6 +277,11 @@ def health():
             'archive': 'firestore' if firestore_store.enabled() else 'memory'}
 
 
+@app.get('/api/firestore/status')
+def firestore_status():
+    return firestore_store.status()
+
+
 @app.get('/api/nfc/status')
 def nfc_status():
     with NFC_LOCK:
@@ -326,6 +343,15 @@ def ticket_sessions(ticket: str):
              'total': round(cart['subtotal'] + PARKING_FEE, 2)} for cart in carts]
 
 
+@app.get('/api/tickets/{ticket}/payment-status')
+def ticket_payment_status(ticket: str):
+    clean_ticket = ticket.strip().upper()
+    if clean_ticket.isdecimal():
+        clean_ticket = 'TKT-' + clean_ticket
+    paid = completed_transaction(session_id=clean_ticket, ticket_no=clean_ticket)
+    return {'paid': paid is not None, 'message': 'receipt already paid' if paid else None}
+
+
 @app.post('/api/payments')
 def create_payment(request: PaymentRequest, http_request: Request):
     session_id = request.session_id or request.transaction_id
@@ -334,6 +360,10 @@ def create_payment(request: PaymentRequest, http_request: Request):
         raise HTTPException(422, 'session_id or transaction_id is required.')
     if not payment_method:
         raise HTTPException(422, 'payment_method or method is required.')
+
+    already_paid = completed_transaction(session_id=session_id)
+    if already_paid:
+        raise HTTPException(409, 'receipt already paid')
 
     cart = cart_or_404(session_id)
     if abs(cart['total'] - request.amount) > .01:
