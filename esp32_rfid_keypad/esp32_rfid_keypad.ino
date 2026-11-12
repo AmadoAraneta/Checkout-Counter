@@ -34,6 +34,8 @@
 */
 
 #include <SPI.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
 #include <MFRC522.h>
 #include <Keypad.h>
 
@@ -59,10 +61,127 @@ char keyMap[ROWS][COLS] = {
 
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
 Keypad keypad = Keypad(makeKeymap(keyMap), rowPins, colPins, ROWS, COLS);
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Change 0x27 to 0x3F if your module uses that address.
 
 String lastUid = "";
 unsigned long lastCardEventAt = 0;
 const unsigned long CARD_EVENT_COOLDOWN_MS = 2000;
+
+void displayPaymentSuccess() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Paid Successful,");
+  lcd.setCursor(0, 1);
+  lcd.print("Thank you");
+}
+
+void displayPaymentFailure(const String &method, const String &price) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Payment");
+  lcd.setCursor(0, 1);
+  lcd.print("Failed,");
+  delay(1400);
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Try Again");
+  delay(1000);
+  if (method == "QR") {
+    displayQrPayment(price);
+  } else {
+    displayNfcPayment(price);
+  }
+}
+
+void displayWaiting() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Waiting for");
+  lcd.setCursor(0, 1);
+  lcd.print("Purchase");
+}
+
+void displayPaymentMode() {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Mode of Payment:");
+  lcd.setCursor(0, 1);
+  lcd.print("QR or NFC?");
+}
+
+void displayQrPayment(const String &price) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Scan to Pay:");
+  lcd.setCursor(0, 1);
+  lcd.print("P");
+  lcd.print(price);
+}
+
+void displayNfcPayment(const String &price) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Type P");
+  lcd.print(price);
+  lcd.print(".");
+  lcd.setCursor(0, 1);
+  lcd.print("Then tap card.");
+}
+
+void displayPrice(const String &price) {
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Price to Pay:");
+  lcd.setCursor(0, 1);
+  lcd.print("P");
+  lcd.print(price);
+}
+
+void readDisplayCommands() {
+  while (Serial.available() > 0) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+    if (command.indexOf("\"event\":\"lcd_success\"") >= 0) {
+      displayPaymentSuccess();
+    } else if (command.indexOf("\"event\":\"lcd_failed\"") >= 0) {
+      String method = "QR";
+      if (command.indexOf("\"method\":\"NFC\"") >= 0) method = "NFC";
+      int priceStart = command.indexOf("\"price\":\"");
+      if (priceStart >= 0) {
+        priceStart += 9;
+        int priceEnd = command.indexOf('\"', priceStart);
+        if (priceEnd > priceStart) displayPaymentFailure(method, command.substring(priceStart, priceEnd));
+      }
+    } else if (command.indexOf("\"event\":\"lcd_payment_mode\"") >= 0) {
+      displayPaymentMode();
+    } else if (command.indexOf("\"event\":\"lcd_qr_payment\"") >= 0) {
+      int priceStart = command.indexOf("\"price\":\"");
+      if (priceStart >= 0) {
+        priceStart += 9;
+        int priceEnd = command.indexOf('\"', priceStart);
+        if (priceEnd > priceStart) displayQrPayment(command.substring(priceStart, priceEnd));
+      }
+    } else if (command.indexOf("\"event\":\"lcd_nfc_payment\"") >= 0) {
+      int priceStart = command.indexOf("\"price\":\"");
+      if (priceStart >= 0) {
+        priceStart += 9;
+        int priceEnd = command.indexOf('\"', priceStart);
+        if (priceEnd > priceStart) displayNfcPayment(command.substring(priceStart, priceEnd));
+      }
+    } else if (command.indexOf("\"event\":\"lcd_waiting\"") >= 0) {
+      displayWaiting();
+    } else if (command.indexOf("\"event\":\"lcd_price\"") >= 0) {
+      int priceStart = command.indexOf("\"price\":\"");
+      if (priceStart >= 0) {
+        priceStart += 9;
+        int priceEnd = command.indexOf('\"', priceStart);
+        if (priceEnd > priceStart) {
+          displayPrice(command.substring(priceStart, priceEnd));
+        }
+      }
+    }
+  }
+}
 
 void printReady() {
   Serial.println(F("{\"event\":\"ready\"}"));
@@ -99,6 +218,11 @@ void printCardEvent(const String &uid) {
 
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(20);
+  Wire.begin(21, 22);
+  lcd.init();
+  lcd.backlight();
+  displayWaiting();
   delay(300);
 
   // Explicitly use the ESP32 VSPI pins listed above.
@@ -110,6 +234,8 @@ void setup() {
 }
 
 void loop() {
+  readDisplayCommands();
+
   // Read keypad events. The dashboard/backend can use these for PIN entry.
   char key = keypad.getKey();
   if (key) {

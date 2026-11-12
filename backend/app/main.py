@@ -59,6 +59,24 @@ NFC_STATE = {
 NFC_LOCK = threading.Lock()
 NFC_STOP = threading.Event()
 NFC_THREAD = None
+NFC_CONNECTION = None
+NFC_IO_LOCK = threading.Lock()
+
+
+def _send_lcd_event(event: dict) -> bool:
+    global NFC_CONNECTION
+    payload = (json.dumps(event, separators=(',', ':')) + '\n').encode('utf-8')
+    with NFC_IO_LOCK:
+        connection = NFC_CONNECTION
+        if connection is None or not connection.is_open:
+            return False
+        try:
+            connection.write(payload)
+            connection.flush()
+            return True
+        except (serial.SerialException, OSError):
+            NFC_CONNECTION = None
+            return False
 
 
 def _handle_nfc_event(event: dict) -> None:
@@ -80,9 +98,12 @@ def _handle_nfc_event(event: dict) -> None:
 
 
 def _nfc_serial_worker() -> None:
+    global NFC_CONNECTION
     while not NFC_STOP.is_set():
         try:
             with serial.Serial(NFC_SERIAL_PORT, NFC_BAUD_RATE, timeout=1) as connection:
+                with NFC_IO_LOCK:
+                    NFC_CONNECTION = connection
                 with NFC_LOCK:
                     NFC_STATE['connected'] = True
                     NFC_STATE['error'] = None
@@ -260,6 +281,39 @@ def nfc_reset():
         NFC_STATE['last_key'] = None
         NFC_STATE['key_sequence'] = ''
     return {'reset': True}
+
+
+class LcdDisplayRequest(BaseModel):
+    mode: Literal['waiting', 'price', 'payment', 'qr', 'nfc', 'success', 'failed']
+    price: str | None = None
+    method: Literal['QR', 'NFC'] | None = None
+
+
+@app.post('/api/lcd/display')
+def lcd_display(payload: LcdDisplayRequest):
+    if payload.mode == 'price':
+        if not payload.price or len(payload.price) > 12:
+            raise HTTPException(422, 'A price is required for LCD price mode.')
+        event = {'event': 'lcd_price', 'price': payload.price}
+    elif payload.mode == 'payment':
+        event = {'event': 'lcd_payment_mode'}
+    elif payload.mode == 'qr':
+        if not payload.price or len(payload.price) > 12:
+            raise HTTPException(422, 'A price is required for LCD QR mode.')
+        event = {'event': 'lcd_qr_payment', 'price': payload.price}
+    elif payload.mode == 'nfc':
+        if not payload.price or len(payload.price) > 12:
+            raise HTTPException(422, 'A price is required for LCD NFC mode.')
+        event = {'event': 'lcd_nfc_payment', 'price': payload.price}
+    elif payload.mode == 'success':
+        event = {'event': 'lcd_success'}
+    elif payload.mode == 'failed':
+        if not payload.price or len(payload.price) > 12 or payload.method is None:
+            raise HTTPException(422, 'Price and payment method are required for LCD failure mode.')
+        event = {'event': 'lcd_failed', 'method': payload.method, 'price': payload.price}
+    else:
+        event = {'event': 'lcd_waiting'}
+    return {'sent': _send_lcd_event(event), 'event': event}
 
 
 @app.get('/api/carts/{session_id}')
