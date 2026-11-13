@@ -52,7 +52,7 @@ The backend is already bound to `0.0.0.0`. QR URLs now replace a loopback host s
 If the laptop has multiple network adapters, a VPN, or auto-detection chooses the wrong address, set `PUBLIC_BASE_URL` before starting the backend:
 
 ```powershell
-$env:PUBLIC_BASE_URL="http://192.168.1.25:5000"
+$env:PUBLIC_BASE_URL="http://10.22.4.155:5000"
 python -m uvicorn app.main:app --host 0.0.0.0 --port 5000 --reload
 ```
 
